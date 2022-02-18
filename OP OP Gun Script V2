@@ -1,0 +1,859 @@
+---------------- [[Local Variables]]
+local ReplicatedStorageService = game:GetService("ReplicatedStorage")
+local ContextActionService = game:GetService("ContextActionService")
+local UserInputService = game:GetService("UserInputService")
+local PlayersService = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
+
+local System = {}
+---------------- [[Main Variables]]
+
+System.IsSilentAimEnabled = true
+System.IsInstantKillEnabled = true
+
+System.SACircleSizeControlSpeed = 10 -- don't touch unless you understand what it does
+System.SACircleTransparencyControlSpeed = .1 -- don't touch unless you understand what it does
+
+System.SilentAimCircleRange = System.SACircleSizeControlSpeed * 10 -- just don't touch
+
+---------
+System.LocalPlayer = PlayersService.LocalPlayer
+
+System.Mouse = System.LocalPlayer:GetMouse()
+
+System.RSRemotesFolder = ReplicatedStorageService:WaitForChild("Events", 100)
+System.RSAmmoFolder = ReplicatedStorageService:WaitForChild("AmmoFolder", 100)
+
+System.PlayerVehiclesFolder = workspace:WaitForChild("PlayerVehicles", 100)
+System.ViewModelsFolder = workspace:WaitForChild("ViewModels", 100)
+System.TemporaryIgnore = workspace:WaitForChild("TemporaryIgnore", 100)
+
+System.Modules = {}
+System.Modules.GunModule = require(ReplicatedStorageService:WaitForChild("GunModule",100))
+System.Modules.TeamList = require(ReplicatedStorageService:WaitForChild("TeamList",100))
+System.Modules.ItemList = require(ReplicatedStorageService:WaitForChild("ItemList",100))
+System.Modules.CameraModifier = require(ReplicatedStorageService:WaitForChild("CameraModifier",100))
+System.Modules.ShoulderCamera = require(ReplicatedStorageService.CameraModifier:WaitForChild("ShoulderCamera",100))
+
+
+System.Remotes = {}
+System.Remotes.GunServer = System.RSRemotesFolder:WaitForChild("GunServer", 100)
+System.Remotes.GetDataInfo = System.RSRemotesFolder:WaitForChild("GetDataInfo", 100)
+
+System.ServerRunTimeHolder = ReplicatedStorageService:WaitForChild("ServerRunTime", 100)
+
+System.LocalPlayerAmmoFolder = System.RSAmmoFolder:WaitForChild(System.LocalPlayer.Name, 100)
+
+System.RecordedToolData = {}
+
+System.VehiclesDataTab = {}
+
+System.TargetsDataTab = {}
+System.LocalPlayerDataTab = nil
+
+System.LastGunUsedTick = 0
+System.CurrentGunRange = 300
+
+System.LocalPlayerPing = 1
+System.LocalPlayerPingHalf = 1
+
+System.SilentAimIgnoreList = {System.ViewModelsFolder, System.TemporaryIgnore}
+System.SilentAimIgnoreListStartFrom = #System.SilentAimIgnoreList + 1
+---------------- [[Functions]]
+
+local TickForPing
+function System:updateLocalPlayerPing()
+	TickForPing = tick()
+	self.Remotes.GetDataInfo:InvokeServer("Playtime")
+	TickForPing = tick() - TickForPing
+	self.LocalPlayerPing, self.LocalPlayerPingHalf = TickForPing, TickForPing/2
+end
+
+function System:registerNewObjectToTable(TargetTable, NewObject, OldObject, TableFindStartFrom)
+	if NewObject ~= nil then
+		table.insert(TargetTable, NewObject)	
+	end
+	if OldObject ~= nil then
+		local OldObjectIndex = table.find(TargetTable, OldObject, TableFindStartFrom)
+		--warn("Removing Value: ", OldObject, "Index: ", OldObjectIndex)
+		if OldObjectIndex ~= nil then
+			table.remove(TargetTable, OldObjectIndex)
+		end
+	end
+end
+
+function System:registerItemType(ToolName)
+	if self.RecordedToolData[ToolName] == nil then
+		local CurrentToolData = self.Modules.ItemList[ToolName]
+		if CurrentToolData ~= nil then
+			local ItemDataTab = {}
+
+			ItemDataTab.MaxAmmo = CurrentToolData.MaxAmmo -- fixed
+			ItemDataTab.AmmoType = CurrentToolData.AmmoType -- fixed
+			ItemDataTab.Damage = CurrentToolData.Damage -- fixed
+			ItemDataTab.Firerate = CurrentToolData.Firerate -- fixed
+			ItemDataTab.Accuracy = (CurrentToolData.Accuracy ~= nil and CurrentToolData.Accuracy.MinAimingAccuracy) or nil -- fixed
+			ItemDataTab.ReloadTime = CurrentToolData.ReloadTime -- fixed
+			ItemDataTab.DamageMultiplier = CurrentToolData.DamageMultiplier -- fixed
+			ItemDataTab.ProjectileAmount = CurrentToolData.ProjectileAmount -- fixed
+			ItemDataTab.FullDamageRange = CurrentToolData.FullDamageRange -- fixed
+			ItemDataTab.Range = CurrentToolData.Range -- fixed
+
+			self.RecordedToolData[ToolName] = ItemDataTab
+			return ItemDataTab
+		else
+			self.RecordedToolData[ToolName] = false
+			return false
+		end	
+	else
+		return self.RecordedToolData[ToolName]
+	end
+end
+
+function System:returnIsGovernmentFromTeamName(TeamName)
+	local CurrentTeamData = self.Modules.TeamList[TeamName]
+	if CurrentTeamData ~= nil then
+		return CurrentTeamData.IsGovernment
+	else
+		return false
+	end
+end
+
+function System:findCharacterHeadFromTargetPart(TargetPart)
+	if TargetPart.Name ~= "Head" then
+		local CurrentParent
+		for Repeat = 1, 5 do
+			CurrentParent = TargetPart.Parent
+			if CurrentParent == nil then
+				break
+			elseif CurrentParent:IsA("Model") == true and CurrentParent:FindFirstChildOfClass("Humanoid") ~= nil then
+				return CurrentParent:FindFirstChild("Head") or TargetPart, CurrentParent.Humanoid
+			end
+		end
+	else
+		return TargetPart, TargetPart.Parent:FindFirstChildOfClass("Humanoid")
+	end
+	return TargetPart
+end
+
+System.ProcessedToolNamesForPass = {}
+function System:generatePassForGunRemote(ToolName, MagValue)
+	local ToolData = self:registerItemType(ToolName)
+
+	local Pass1, Pass2 = nil, 1
+	local ToolNameLength = ToolName:len()
+
+	if self.ProcessedToolNamesForPass[ToolName] == nil then
+		for Num1 = 1, ToolNameLength do
+			Pass2 = Pass2 + (string.byte(string.sub(ToolName, Num1, Num1)) * 2)
+		end
+		self.ProcessedToolNamesForPass[ToolName] = Pass2
+	else
+		Pass2 = self.ProcessedToolNamesForPass[ToolName]
+	end
+
+	Pass1 = self.ServerRunTimeHolder.Value
+	Pass2 = tonumber(string.sub(tostring(Pass2 * Pass1 * MagValue * ToolNameLength * ToolData.Firerate * ToolData.Accuracy), 1, 16))
+	return Pass2, Pass1
+end
+
+function System:customGunReloadFunction(GunTool)
+	self.Remotes.GunServer:FireServer("Reload", GunTool)
+end
+
+System.DamageHitInfoHolderTabs = {}
+System.DamageHitInfoTab = {}
+System.DamageHitInfoTab.HitType = "Player"
+
+function System:returnHitInfoHolderTab(GunProjectileAmount)
+	local CurrentDamageHitInfoHolderTab = self.DamageHitInfoHolderTabs[GunProjectileAmount]
+	if CurrentDamageHitInfoHolderTab == nil then
+		CurrentDamageHitInfoHolderTab = {}
+		for ProjectileCount = 1, GunProjectileAmount or 1 do
+			CurrentDamageHitInfoHolderTab["HitInfo"..tostring(ProjectileCount)] = self.DamageHitInfoTab
+		end
+		self.DamageHitInfoHolderTabs[GunProjectileAmount] = CurrentDamageHitInfoHolderTab
+	end
+	return CurrentDamageHitInfoHolderTab
+end
+
+function System:customDamagePlayerFunction(RepeatCount, HitPosition, HitObject, HitNormal, GunTool, GunMagValue, GunProjectileAmount)
+	local CurrentDamageHitInfoHolderTab = self:returnHitInfoHolderTab(GunProjectileAmount)
+	self.DamageHitInfoTab.HitPoint = HitPosition
+	self.DamageHitInfoTab.HitPart = HitObject
+	self.DamageHitInfoTab.Surface = HitPosition.Unit
+	for ShootCount = 0, RepeatCount - 1 do
+		self.Remotes.GunServer:FireServer("Fire", GunTool, CurrentDamageHitInfoHolderTab, self:generatePassForGunRemote(GunTool.Name, GunMagValue - ShootCount));
+	end
+end
+--------
+
+function System:returnDamageFromTargetDistance(TargetDistance, TargetDamageMultiplier, FullDamageRange, MaxGunRange, DamageValue)
+	if TargetDistance > FullDamageRange then
+		if TargetDistance < MaxGunRange then
+			return math.floor(math.ceil(DamageValue-DamageValue*((TargetDistance-FullDamageRange)/(MaxGunRange-FullDamageRange))) * TargetDamageMultiplier)
+		else
+			return 0
+		end
+	else
+		return math.floor(DamageValue * TargetDamageMultiplier)
+	end
+end
+
+function System:requestInstantKill(GunSelf, HitPosition, HitObject, HitNormal)
+	--warn(GunSelf, HitPosition, HitObject, HitNormal, "End")
+
+	if HitObject ~= nil and HitObject:IsA("BasePart") == true and HitObject.Parent ~= nil then
+		local HitHumanoid, HitPlayer, HitPlayerDataTab; HitObject, HitHumanoid = self:findCharacterHeadFromTargetPart(HitObject)
+
+		if HitHumanoid ~= nil and HitHumanoid.Health > 0 then
+
+			HitPlayer = PlayersService:GetPlayerFromCharacter(HitObject.Parent)
+			HitPlayerDataTab = self.TargetsDataTab[HitPlayer]
+			--warn("Player About To Target: ", HitPlayer, HitPlayerDataTab.IsOnVehicleSeat, HitPlayerDataTab.WantedStatusHolder.Value, HitPlayerDataTab.InMyTeam)
+			if HitPlayerDataTab ~= nil and HitPlayerDataTab.InMyTeam == false then
+				local CurrentShootDamage = System:returnDamageFromTargetDistance((GunSelf.GunHandle.Position - HitPosition).Magnitude, HitPlayerDataTab.DamageMultiplier or 1, GunSelf.FullDamageRange, GunSelf.MaxGunRange, GunSelf.GunDamageOnHead)
+				--print("+Damage From Range ::", CurrentShootDamage, (GunSelf.GunHandle.Position - HitPosition).Magnitude, HitPlayerDataTab.DamageMultiplier or 1, GunSelf.FullDamageRange, GunSelf.MaxGunRange, GunSelf.GunDamageOnHead)
+				if CurrentShootDamage ~= 0 then
+					local CurrentShootLoopCount = math.ceil((HitHumanoid.Health/CurrentShootDamage)/GunSelf.GunProjectileAmount) -- ModuleTab.FullDamageRange
+					if CurrentShootLoopCount > GunSelf.GunMagHolder.Value then
+						CurrentShootLoopCount = GunSelf.GunMagHolder.Value
+					end
+					self:customDamagePlayerFunction(CurrentShootLoopCount, HitPosition, HitObject, HitNormal, GunSelf.GunTool, GunSelf.GunMagHolder.Value, GunSelf.GunProjectileAmount)
+					--print("+Damage Loop Count : ", CurrentShootLoopCount, GunSelf.GunTool, GunSelf.GunMagHolder.Value)
+					return nil
+				end
+			end
+		end
+	end
+	
+	return HitPosition, HitObject, HitNormal
+end
+
+System.CosmeticBulletObject = Instance.new("Part")
+System.CosmeticBulletObject.Anchored = true
+System.CosmeticBulletObject.CanCollide = false
+System.CosmeticBulletObject.CanTouch = false
+System.CosmeticBulletObject.Transparency = 0
+System.CosmeticBulletObject.Material = Enum.Material.Neon
+System.CosmeticBulletObject.Color = Color3.new(0.666667, 0, 1)
+System.CosmeticBulletObject.Size = Vector3.new(.1, .1, 0)
+function System.playSilentAimBulletEffect(Origin, TargetHead)
+	local cosmeticBulletObject = System.CosmeticBulletObject:Clone()
+	cosmeticBulletObject.Size = Vector3.new(cosmeticBulletObject.Size.X, cosmeticBulletObject.Size.Y, (TargetHead.Position - Origin).Magnitude)
+	cosmeticBulletObject.CFrame = CFrame.new(Origin, TargetHead.Position) * CFrame.new(0, 0, -cosmeticBulletObject.Size.Z/2)
+	cosmeticBulletObject.Parent = System.TemporaryIgnore
+	task.wait(.1)
+	cosmeticBulletObject:Destroy()
+end
+
+function System.modedFireSingleProjectile(GunSelf, GunTool)
+	System.LastGunUsedTick = tick()
+	System.CurrentGunRange = GunSelf.MaxGunRange
+	--print("Using ModedFireSingleShot", GunSelf, GunTool)
+	
+	local TargetPosition, TargetObject, TargetNormal
+	if System.IsSilentAimEnabled == true then
+		if GunSelf.AmmoType ~= "12 Gauge" or tick() - GunSelf.SilentShotgunTick >= .1 then
+			local SilentTargetHead = System:returnClosestVisibleTargetToMouse()
+			if SilentTargetHead ~= nil then
+				TargetPosition, TargetObject, TargetNormal = SilentTargetHead.Position, SilentTargetHead, SilentTargetHead.Position.Unit
+				task.spawn(System.playSilentAimBulletEffect, GunSelf.GunHandle.Position, SilentTargetHead)
+			else
+				TargetPosition, TargetObject, TargetNormal = GunSelf:FireCuteProjectile(GunTool)
+			end
+		else
+			return nil
+		end
+	else
+		TargetPosition, TargetObject, TargetNormal = GunSelf:FireCuteProjectile(GunTool)
+	end
+	
+	if System.IsInstantKillEnabled == true then
+		if GunSelf.AmmoType == "12 Gauge" then
+			if tick() - GunSelf.SilentShotgunTick < .1 then
+				return nil
+			else
+				GunSelf.SilentShotgunTick = tick()
+			end
+		end
+		return System:requestInstantKill(GunSelf, TargetPosition, TargetObject, TargetNormal)
+	end
+	
+	return TargetPosition, TargetObject, TargetNormal
+end
+
+function System:modifyGunHandlerModule(Module, ModuleTab)
+	if ModuleTab.LoumecDum == nil then
+		ModuleTab.LoumecDum = true
+		if Module.Parent ~= nil and Module.Parent.Parent ~= nil then
+			ModuleTab.GunTool = Module.Parent.Parent
+
+			ModuleTab.GunName = ModuleTab.GunTool.Name
+			ModuleTab.GunHandle = ModuleTab.GunTool.Handle
+			
+			ModuleTab.GunInfoFolder = ModuleTab.GunTool.InfoFolder
+			ModuleTab.GunMagHolder = ModuleTab.GunInfoFolder.Mag
+
+			ModuleTab.GunDataTab = self:registerItemType(ModuleTab.GunName)
+			ModuleTab.AmmoType, ModuleTab.GunDamage, ModuleTab.GunProjectileAmount, ModuleTab.FullDamageRange, ModuleTab.MaxGunRange = ModuleTab.GunDataTab.AmmoType, ModuleTab.GunDataTab.Damage, ModuleTab.GunDataTab.ProjectileAmount, ModuleTab.GunDataTab.FullDamageRange, ModuleTab.GunDataTab.Range
+			ModuleTab.GunDamageOnHead = ModuleTab.GunDamage.Head
+
+			--warn(Module:GetFullName(), ModuleTab, ModuleTab.AmmoType, ModuleTab.GunDamage, ModuleTab.GunDamageOnHead)
+			
+			ModuleTab.SilentShotgunTick = 0
+			
+			ModuleTab.FireCuteProjectile = ModuleTab.FireSingleProjectile
+			ModuleTab.FireSingleProjectile = self.modedFireSingleProjectile
+		end
+	end
+end
+
+System.OriginalRequire = getrenv().require
+function System:initiateGunHandlerModification()
+	getrenv().require = function(Module)
+		if Module.Name == "GunHandlerLocal" then
+			self:modifyGunHandlerModule(Module, require(Module))
+		end
+		return self.OriginalRequire(Module)
+	end
+	local ClientInteractor, GunHandlerLocal
+	for _, GunTool in next, self.LocalPlayer:WaitForChild("Backpack"):GetChildren() do
+		if GunTool:IsA("Tool") == true then
+			ClientInteractor = GunTool:FindFirstChild("ClientInteractor")
+			if ClientInteractor ~= nil then
+				GunHandlerLocal = ClientInteractor:FindFirstChild("GunHandlerLocal")
+				if GunHandlerLocal ~= nil then
+					task.spawn(self.modifyGunHandlerModule, self, GunHandlerLocal, require(GunHandlerLocal))
+				end
+			end
+		end
+	end
+	if self.LocalPlayer.Character ~= nil then
+		for _, GunTool in next, self.LocalPlayer.Character:GetChildren() do
+			if GunTool:IsA("Tool") == true then
+				ClientInteractor = GunTool:FindFirstChild("ClientInteractor")
+				if ClientInteractor ~= nil then
+					GunHandlerLocal = ClientInteractor:FindFirstChild("GunHandlerLocal")
+					if GunHandlerLocal ~= nil then
+						task.spawn(self.modifyGunHandlerModule, self, GunHandlerLocal, require(GunHandlerLocal))
+					end
+				end
+			end
+		end
+	end
+end
+
+----
+
+function System:updateInMyTeamTargetData(TargetData)
+	if TargetData.WantedStatusHolder ~= nil then
+		local CurrentTargetWantedValue = TargetData.WantedStatusHolder.Value
+		if self.LocalPlayerDataTab.TeamIsGovernment == true then
+			if CurrentTargetWantedValue == 1 or (CurrentTargetWantedValue == 2 and TargetData.IsOnVehicleSeat == false) then
+				TargetData.InMyTeam = true
+			else
+				TargetData.InMyTeam = false
+			end
+		else
+			TargetData.InMyTeam = self.LocalPlayerDataTab.PassiveMode
+		end
+	end
+end
+
+function System.updateTargetCharacterData(Character)
+	local Player = PlayersService:GetPlayerFromCharacter(Character)
+	if Player ~= nil then
+		local CurrentPlayerData, CurrentHumanoidSeatPart = System.TargetsDataTab[Player], nil
+		System:registerNewObjectToTable(System.SilentAimIgnoreList, Character, CurrentPlayerData.Character, System.SilentAimIgnoreListStartFrom)
+		CurrentPlayerData.DamageMultiplier = 1
+		CurrentPlayerData.Character = Character
+		CurrentPlayerData.Head = Character:WaitForChild("Head", 10)
+		CurrentPlayerData.Humanoid = Character:WaitForChild("Humanoid", 10)
+
+		local function onChildAddedToCharacter(Child)
+			if Child:IsA("Accessory") == true and Child.Name:find("Helmet") ~= nil then
+				local CurrentAccessoryData = System:registerItemType(Child.Name)
+				if CurrentAccessoryData ~= false and CurrentAccessoryData.DamageMultiplier ~= nil then
+					CurrentPlayerData.DamageMultiplier = CurrentAccessoryData.DamageMultiplier
+				end
+			end
+		end
+
+		Character.ChildAdded:Connect(onChildAddedToCharacter)
+		for _, Child in next, Character:GetChildren() do
+			if Child:IsA("Accessory") == true then
+				task.spawn(onChildAddedToCharacter, Child)	
+			end
+		end
+
+		CurrentPlayerData.Dead = false
+	end
+end
+
+function System.registerTargetPlayer(TargetPlayer)
+	if TargetPlayer ~= System.LocalPlayer then
+		local CurrentTargetTab = {}
+
+		CurrentTargetTab.Dead = true
+		CurrentTargetTab.InMyTeam = false
+		CurrentTargetTab.IsOnVehicleSeat = false
+		CurrentTargetTab.LastVisiblityCheck = 0
+		CurrentTargetTab.DamageMultiplier = 1
+
+		System.TargetsDataTab[TargetPlayer] = CurrentTargetTab
+		
+		CurrentTargetTab.WantedStatusFolder = TargetPlayer:WaitForChild("WantedStatus", 10)
+		if CurrentTargetTab.WantedStatusFolder ~= nil then
+			CurrentTargetTab.WantedStatusHolder = CurrentTargetTab.WantedStatusFolder:WaitForChild("WantedStatus", 10)
+			if CurrentTargetTab.WantedStatusHolder ~= nil then
+				local function WantedValueChanged()
+					--warn("--++++--", Value, CurrentPlayerData.WantedHolder.Value, " Wanted Or Team Changed ", Player)
+					System:updateInMyTeamTargetData(CurrentTargetTab)
+				end
+				CurrentTargetTab.WantedStatusHolder.Changed:Connect(WantedValueChanged)
+				System:updateInMyTeamTargetData(CurrentTargetTab)
+
+				TargetPlayer.CharacterAdded:Connect(System.updateTargetCharacterData)
+				if TargetPlayer.Character ~= nil and TargetPlayer.Character.Parent ~= nil then
+					System.updateTargetCharacterData(TargetPlayer.Character)
+				end
+			end
+		end
+	else
+		if System.LocalPlayerDataTab == nil then
+			local NewLocalPlayerDataTab = {}
+			NewLocalPlayerDataTab.TeamHolder = {Value = "IDK"}
+			NewLocalPlayerDataTab.TeamValue = "IDK"
+			NewLocalPlayerDataTab.TeamIsGovernment = false
+			NewLocalPlayerDataTab.PassiveMode = true
+
+			System.LocalPlayerDataTab = NewLocalPlayerDataTab
+			
+			NewLocalPlayerDataTab.WantedStatusFolder = TargetPlayer:WaitForChild("WantedStatus", 10)
+			NewLocalPlayerDataTab.PassiveModeHolder = NewLocalPlayerDataTab.WantedStatusFolder:WaitForChild("PassiveMode", 10)
+
+			local function updateAllTargetsData()
+				for _, TargetDataTab in next, System.TargetsDataTab do
+					System:updateInMyTeamTargetData(TargetDataTab)
+				end
+			end
+
+			local function onLocalTeamValueChanged()
+				if NewLocalPlayerDataTab.TeamHolder.Value ~= NewLocalPlayerDataTab.TeamValue then
+					NewLocalPlayerDataTab.TeamValue = NewLocalPlayerDataTab.TeamHolder.Value
+					NewLocalPlayerDataTab.TeamIsGovernment = System:returnIsGovernmentFromTeamName(NewLocalPlayerDataTab.TeamValue)
+					updateAllTargetsData()
+				end
+			end
+
+			local function onLocalCharacterAdded(Character)
+				System:registerNewObjectToTable(System.SilentAimIgnoreList, Character, NewLocalPlayerDataTab.Character, System.SilentAimIgnoreListStartFrom)
+				NewLocalPlayerDataTab.Character = Character
+				NewLocalPlayerDataTab.TeamHolder = Character:WaitForChild("PlayerTeam", 10)
+				NewLocalPlayerDataTab.TeamHolder.Changed:Connect(onLocalTeamValueChanged)
+				onLocalTeamValueChanged()
+			end
+			
+			local function onPassiveModeChanged()
+				if NewLocalPlayerDataTab.PassiveModeHolder.Value ~= NewLocalPlayerDataTab.PassiveMode then
+					NewLocalPlayerDataTab.PassiveMode = NewLocalPlayerDataTab.PassiveModeHolder.Value
+					updateAllTargetsData()
+				end
+			end
+			
+			NewLocalPlayerDataTab.PassiveModeHolder.Changed:Connect(onPassiveModeChanged)
+			onPassiveModeChanged()
+			System.LocalPlayer.CharacterAdded:Connect(onLocalCharacterAdded)
+			if System.LocalPlayer.Character ~= nil then
+				onLocalCharacterAdded(System.LocalPlayer.Character)
+			end
+		end
+	end
+end
+
+function System.unregisterTargetPlayer(Player)
+	local PlayerDataTab = System.TargetsDataTab[Player]
+	--print("Player Left: ", Player, "Data: ", PlayerDataTab)
+	if PlayerDataTab ~= nil and PlayerDataTab.Character ~= nil then
+		--print("Player Left: ", Player, "Removing Character")
+		System:registerNewObjectToTable(System.SilentAimIgnoreList, nil, PlayerDataTab.Character, System.SilentAimIgnoreListStartFrom)
+	end
+	System.TargetsDataTab[Player] = nil
+end
+
+System.raycastParams = RaycastParams.new()
+System.raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+System.raycastParams.FilterDescendantsInstances = {}
+System.raycastParams.IgnoreWater = true
+
+function System:isTargetHeadVisible(TargetCharacterHeadPosition, LocalPlayerRootPosition, IgnoreList)
+	local CurrentCameraPosition =  workspace.CurrentCamera.CFrame.Position
+
+	--table.insert(IgnoreList, TargetCharacter)
+	self.raycastParams.FilterDescendantsInstances = IgnoreList
+
+	if workspace:Raycast(CurrentCameraPosition, TargetCharacterHeadPosition - CurrentCameraPosition, self.raycastParams) == nil and workspace:Raycast(CurrentCameraPosition, LocalPlayerRootPosition - CurrentCameraPosition, self.raycastParams) == nil then
+		return true
+	end
+
+	return false
+end
+
+function System:returnClosestVisibleTargetToMouse()
+	if self.LocalPlayer.Character ~= nil and self.LocalPlayer.Character.PrimaryPart ~= nil then
+		local LocalPlayerCharacter = self.LocalPlayer.Character
+		local LocalPlayerRootPart = LocalPlayerCharacter.PrimaryPart
+
+		local CurrentCamera = workspace.CurrentCamera
+		local MousePositionVector2 = Vector2.new(self.Mouse.X, self.Mouse.Y)
+		local CurrentIgnoreList = self.SilentAimIgnoreList
+
+		local ClosestTargetData = {}
+		local currentTargetScreenPositionV2, currentTargetScreenPosition, currentTargetScreenZIndex, currentTargetDistanceFromMouse, currentTargetOnScreen, currentTargetVisible
+
+		for TargetPlayer, TargetPlayerTab in next, self.TargetsDataTab do
+			if TargetPlayerTab.InMyTeam == false and TargetPlayerTab.Dead == false then
+				if TargetPlayerTab.Humanoid.Health > 0 then
+					if self.LocalPlayer:DistanceFromCharacter(TargetPlayerTab.Head.Position) < self.CurrentGunRange then
+						--print("WorldToViewportPoint --- --- ---", CurrentCamera:WorldToViewportPoint(TargetPlayerTab.Head.Position))
+						currentTargetScreenPosition, currentTargetOnScreen = CurrentCamera:WorldToScreenPoint(TargetPlayerTab.Head.Position)
+
+						if currentTargetOnScreen == true then
+							currentTargetScreenPositionV2 = Vector2.new(currentTargetScreenPosition.X, currentTargetScreenPosition.Y)
+							--currentTargetScreenZIndex = currentTargetScreenPosition.Z
+							currentTargetDistanceFromMouse = (MousePositionVector2 - currentTargetScreenPositionV2).Magnitude
+							--print(TargetPlayer, "-------- 1", currentTargetDistanceFromMouse)
+							--if CurrentIgnoreList == nil then CurrentIgnoreList = self:returnNewSilentIgnoreList(LocalPlayerCharacter) end
+							if currentTargetDistanceFromMouse <= self.SilentAimCircleRange and (tick() - TargetPlayerTab.LastVisiblityCheck <= .1 or self:isTargetHeadVisible(TargetPlayerTab.Head.Position, LocalPlayerRootPart.Position, CurrentIgnoreList) == true) then
+								--print(TargetPlayer, "----------------- 2", currentTargetDistanceFromMouse)
+								if tick() - TargetPlayerTab.LastVisiblityCheck > .1 then
+									TargetPlayerTab.LastVisiblityCheck = tick()	
+								end
+								if ClosestTargetData.Head == nil then
+									ClosestTargetData.Head = TargetPlayerTab.Head
+									--ClosestTargetData.ScreenZIndex = currentTargetScreenZIndex
+									ClosestTargetData.DistanceFromMouse = currentTargetDistanceFromMouse
+									--warn("-- Updated List  ", TargetPlayerTab.Head, currentTargetDistanceFromMouse)
+								elseif ClosestTargetData.DistanceFromMouse > currentTargetDistanceFromMouse then --and ClosestTargetData.ScreenZIndex > currentTargetScreenZIndex then
+									ClosestTargetData.Head = TargetPlayerTab.Head
+									--ClosestTargetData.ScreenZIndex = currentTargetScreenZIndex
+									ClosestTargetData.DistanceFromMouse = currentTargetDistanceFromMouse
+									--warn("-- Updated List 2 ", TargetPlayerTab.Head, currentTargetDistanceFromMouse)
+								end
+							end
+						end 
+					end
+				else
+					TargetPlayerTab.Dead = true
+				end
+			end
+		end
+
+		if ClosestTargetData.Head ~= nil then
+			return ClosestTargetData.Head
+		end
+	end
+end
+
+--------
+function System:updateSeatedPlayerFromSeatWeld(VehicleDataTab, VehicleSeatWeld)
+	local LastSeatedPlayerDataTab = VehicleDataTab.SeatedPlayerDataTab
+	if LastSeatedPlayerDataTab ~= nil then
+		VehicleDataTab.SeatedPlayerDataTab = nil
+		LastSeatedPlayerDataTab.IsOnVehicleSeat = false
+		if self.LocalPlayerDataTab.TeamIsGovernment == true then
+			self:updateInMyTeamTargetData(LastSeatedPlayerDataTab)
+		end
+		--warn("-- Player Un-Seated: ", LastSeatedPlayerDataTab.Character)
+	end
+	if VehicleSeatWeld ~= nil and VehicleSeatWeld.Part1 ~= nil and VehicleSeatWeld.Part1.Parent ~= nil then
+		local SeatedPlayerDataTab = self.TargetsDataTab[PlayersService:GetPlayerFromCharacter(VehicleSeatWeld.Part1.Parent)]
+		if SeatedPlayerDataTab ~= nil then
+			VehicleDataTab.SeatedPlayerDataTab = SeatedPlayerDataTab
+			SeatedPlayerDataTab.IsOnVehicleSeat = true
+			--warn("++ Player Seated: ", SeatedPlayerDataTab.Character)
+			if self.LocalPlayerDataTab.TeamIsGovernment == true then
+				self:updateInMyTeamTargetData(SeatedPlayerDataTab)
+			end
+		end
+	end
+end
+
+function System.registerVehicleModel(VehicleModel)
+	local VehicleDataTab = {}
+	System.VehiclesDataTab[VehicleModel] = VehicleDataTab
+
+	VehicleDataTab.SeatedPlayerDataTab = nil
+	VehicleDataTab.VehicleChassis = VehicleModel:WaitForChild("Chassis", 5)
+	if VehicleDataTab.VehicleChassis ~= nil and System.VehiclesDataTab[VehicleModel] ~= nil then
+		VehicleDataTab.VehicleSeat = VehicleDataTab.VehicleChassis:WaitForChild("VehicleSeat", 5)
+		if VehicleDataTab.VehicleSeat ~= nil and System.VehiclesDataTab[VehicleModel] ~= nil then
+			VehicleDataTab.VehicleSeat.ChildAdded:Connect(function(Child)
+				if Child.Name == "SeatWeld" then
+					System:updateSeatedPlayerFromSeatWeld(VehicleDataTab, Child)
+				end
+			end)
+			VehicleDataTab.VehicleSeat.ChildRemoved:Connect(function(Child)
+				if Child.Name == "SeatWeld" then
+					System:updateSeatedPlayerFromSeatWeld(VehicleDataTab, nil)
+				end
+			end)
+			if VehicleDataTab.VehicleSeat:FindFirstChild("SeatWeld") ~= nil then
+				System:updateSeatedPlayerFromSeatWeld(VehicleDataTab, VehicleDataTab.VehicleSeat.SeatWeld)
+			end
+		end
+	end
+end
+
+function System.unregisterVehicleModel(VehicleModel)
+	System.VehiclesDataTab[VehicleModel] = nil
+end
+
+function System:initiateVehicleRegistrationSystem()
+	self.PlayerVehiclesFolder.ChildAdded:Connect(self.registerVehicleModel)
+	self.PlayerVehiclesFolder.ChildRemoved:Connect(self.unregisterVehicleModel)
+	for _, VehicleModel in next, self.PlayerVehiclesFolder:GetChildren() do
+		task.spawn(self.registerVehicleModel, VehicleModel)
+	end
+end
+
+--------
+
+System.CurrentGuiInest = GuiService:GetGuiInset()
+function System.updateSilentAimCirclePosition()
+	System.SilentAimCircle.Position = Vector2.new(System.Mouse.X + System.CurrentGuiInest.X, System.Mouse.Y + System.CurrentGuiInest.Y)
+end
+
+function System:updateSilentAimCircleRadius(CurrentSrollDirection)
+	local CurrentRadius, CurrentSizeControlSpeed = self.SilentAimCircle.Radius, self.SACircleSizeControlSpeed
+	if CurrentSrollDirection == 1 then
+		self.SilentAimCircle.Radius = self.SilentAimCircle.Radius + CurrentSizeControlSpeed
+	else
+		if CurrentRadius - CurrentSizeControlSpeed <= 0 then
+			self.SilentAimCircle.Radius = CurrentSizeControlSpeed
+		else
+			self.SilentAimCircle.Radius = self.SilentAimCircle.Radius - CurrentSizeControlSpeed
+		end
+	end
+	self.SilentAimCircleRange = self.SilentAimCircle.Radius
+end
+
+System.SilentAimCircleTransparencySave = 1
+function System:updateSilentAimCircleTransparency(CurrentSrollDirection)
+	local CurrentTransparency, CurrentTransparencyControlSpeed = self.SilentAimCircle.Transparency, self.SACircleTransparencyControlSpeed
+	if CurrentSrollDirection == 1 then
+		if CurrentTransparency + CurrentTransparencyControlSpeed >= 1 then
+			self.SilentAimCircle.Transparency = 1
+		else
+			self.SilentAimCircle.Transparency = self.SilentAimCircle.Transparency + CurrentTransparencyControlSpeed
+		end
+	else
+		if CurrentTransparency + CurrentTransparencyControlSpeed <= 0 then
+			self.SilentAimCircle.Transparency = 0
+		else
+			self.SilentAimCircle.Transparency = self.SilentAimCircle.Transparency - CurrentTransparencyControlSpeed
+		end
+	end
+	self.SilentAimCircleTransparencySave = self.SilentAimCircle.Transparency
+end
+
+function System:updateSilentAimCircleFilled(CurrentSrollDirection)
+	if CurrentSrollDirection == 1 then
+		self.SilentAimCircle.Filled = true
+		self.SilentAimCircle.Transparency = self.SilentAimCircleTransparencySave
+	else
+		self.SilentAimCircle.Filled = false
+		self.SilentAimCircle.Transparency = 1
+	end 
+end
+
+function System.onLocalPlayerScroll(actionName, inputState, inputObj)
+	local CurrentSrollDirection, ContextActionResult = inputObj.Position.Z, Enum.ContextActionResult.Pass
+	if UserInputService:IsKeyDown(Enum.KeyCode.J) == true then
+		System:updateSilentAimCircleRadius(CurrentSrollDirection)
+		ContextActionResult = Enum.ContextActionResult.Sink
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.K) == true then
+		System:updateSilentAimCircleTransparency(CurrentSrollDirection)
+		ContextActionResult = Enum.ContextActionResult.Sink
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.L) == true then
+		System:updateSilentAimCircleFilled(CurrentSrollDirection)
+		ContextActionResult = Enum.ContextActionResult.Sink
+	end
+	return ContextActionResult
+end
+
+--------
+
+function System:AntiSmallBrainCamera()
+	local CameraModifierModule, ShoulderCameraModule  = self.Modules.CameraModifier, self.Modules.ShoulderCamera
+	local NiceFunctionBTW, CurrentTool = function()end, nil
+	if self.LocalPlayer.Character ~= nil then CurrentTool = self.LocalPlayer.Character:FindFirstChildOfClass("Tool") end
+	CameraModifierModule.EnableADS = NiceFunctionBTW
+	CameraModifierModule.EnableOSC = NiceFunctionBTW
+	if CurrentTool ~= nil then
+		if CameraModifierModule:GetADSEnabled() == true then
+			CameraModifierModule.DisableADS(nil, CurrentTool)	
+		end
+		if CameraModifierModule:GetOSCEnabled() == true then
+			CameraModifierModule.DisableOSC(nil, CurrentTool)	
+		end
+		if ShoulderCameraModule.enabled == true then
+			ShoulderCameraModule:setEnabled(false)
+		end
+	end
+	CameraModifierModule.DisableADS = NiceFunctionBTW
+	CameraModifierModule.DisableOSC = NiceFunctionBTW
+	ShoulderCameraModule.setEnabled = NiceFunctionBTW
+	CameraModifierModule.InitiateHolsterCountdown = NiceFunctionBTW
+	CameraModifierModule:ToggleWeaponHolster(true)
+	CameraModifierModule.ToggleWeaponHolster = NiceFunctionBTW
+	CameraModifierModule.GunHolstered = false
+end
+
+--------
+
+System.RegisteredCharacterGuns = {}
+function System.onAutoReloadChildAdded(Child)
+	if Child:IsA("Tool") == true then
+		local CurrentGunDataTab = {}
+		System.RegisteredCharacterGuns[Child] = CurrentGunDataTab
+
+		local CurrentToolDataTab = System:registerItemType(Child.Name)
+		if CurrentToolDataTab ~= false and CurrentToolDataTab.ReloadTime ~= nil then
+			CurrentGunDataTab.ToolDataTab = CurrentToolDataTab
+			CurrentGunDataTab.ReloadTick = 0
+			CurrentGunDataTab.ReloadTime = CurrentToolDataTab.ReloadTime
+			CurrentGunDataTab.GunInfoFolder = Child:WaitForChild("InfoFolder", 4)
+			CurrentGunDataTab.GunHandle = Child:WaitForChild("Handle", 4)
+			if CurrentGunDataTab.GunInfoFolder ~= nil and CurrentGunDataTab.GunHandle ~= nil then
+				CurrentGunDataTab.MagHolder = CurrentGunDataTab.GunInfoFolder:WaitForChild("Mag", 4)
+				CurrentGunDataTab.FakeAmmoHolder = CurrentGunDataTab.GunHandle:WaitForChild("ClientAmmo", 4)
+				if CurrentGunDataTab.MagHolder ~= nil and CurrentGunDataTab.FakeAmmoHolder ~= nil then
+					CurrentGunDataTab.OwnedAmmoHolder = System.LocalPlayerAmmoFolder[CurrentToolDataTab.AmmoType]
+					CurrentGunDataTab.Registered = true
+				end
+			end
+		else
+			System.RegisteredCharacterGuns[Child] = nil
+		end
+	end
+end
+
+function System.onAutoReloadChildRemoved(Child)
+	System.RegisteredCharacterGuns[Child] = nil
+end
+
+function System.onAutoReloadCharacterAdded(Character)
+	table.clear(System.RegisteredCharacterGuns)
+
+	Character.ChildAdded:Connect(System.onAutoReloadChildAdded)
+	Character.ChildRemoved:Connect(System.onAutoReloadChildRemoved)
+
+	for _, Object in next, Character:GetChildren() do
+		if Object:IsA("Tool") == true then
+			System.onAutoReloadChildAdded(Object)
+		end
+	end
+
+	warn("----------------------------------------------------------------------------------")
+	print("OP Gun Script:: Join Discord Server for support related to the script and to report bugs oh ofc i accept suggestions too")
+	print("Discord Join Link: https://discord.gg/GdU7xkQpsp")
+	warn("----------------------------------------------------------------------------------")
+end
+
+function System:checkIfGunMagHasEnoughBullets(GunTab)
+	if GunTab.OwnedAmmoHolder.Value > 0 then
+		if GunTab.ToolDataTab.AmmoType == "12 Gauge" then
+			if GunTab.MagHolder.Value < GunTab.ToolDataTab.MaxAmmo and tick() - self.LastGunUsedTick >= self.LocalPlayerPing then
+				return false
+			else
+				return true
+			end
+		else
+			if GunTab.MagHolder.Value <= 1 or (tick() - self.LastGunUsedTick >= 4.5 + self.LocalPlayerPing and GunTab.MagHolder.Value < GunTab.ToolDataTab.MaxAmmo/2) then
+				return false
+			else
+				return true
+			end 
+		end	
+	end
+end
+
+function System:checkIfGunNeedsReload(GunTool, GunTab)
+	if GunTab.Registered == true then
+		GunTab.FakeAmmoHolder.Value = GunTab.MagHolder.Value
+		if self:checkIfGunMagHasEnoughBullets(GunTab) == false and tick() - GunTab.ReloadTick > GunTab.ReloadTime + self.LocalPlayerPing then
+			GunTab.ReloadTick = tick()
+			self:customGunReloadFunction(GunTool)
+		end
+	end
+end
+
+function System:requestCheckRegisteredGunsForReload()
+	for GunTool, GunTab in next, System.RegisteredCharacterGuns do
+		self:checkIfGunNeedsReload(GunTool, GunTab)
+	end
+end
+
+--------
+
+function System:initiateSystem()
+	PlayersService.PlayerAdded:Connect(self.registerTargetPlayer)
+	PlayersService.PlayerRemoving:Connect(self.unregisterTargetPlayer)
+	
+	self.registerTargetPlayer(self.LocalPlayer)
+	for _, Player in next, PlayersService:GetPlayers() do
+		if Player ~= self.LocalPlayer then
+			task.spawn(self.registerTargetPlayer, Player)	
+		end
+	end
+	self:initiateVehicleRegistrationSystem()
+
+	if Drawing ~= nil then
+		self.SilentAimCircle = Drawing.new("Circle")
+
+		self.SilentAimCircle.Radius = self.SilentAimCircleRange
+		self.SilentAimCircle.Visible = true
+		self.SilentAimCircle.Thickness = 2
+		self.SilentAimCircle.Filled = false
+		self.SilentAimCircle.Color = Color3.fromRGB(255, 0, 127)
+		self.SilentAimCircle.Transparency = 1
+		self.SilentAimCircleTransparencySave = 1
+
+		self.Mouse.Move:Connect(self.updateSilentAimCirclePosition)
+
+		ContextActionService:BindAction("SilentAimScrollEvent", self.onLocalPlayerScroll, false, Enum.UserInputType.MouseWheel)
+	else
+		self.SilentAimCircleRange = 9999
+	end
+	
+	self:AntiSmallBrainCamera()
+	self:initiateGunHandlerModification()
+
+	self.LocalPlayer.CharacterAdded:Connect(self.onAutoReloadCharacterAdded)
+	if self.LocalPlayer.Character ~= nil then
+		self.onAutoReloadCharacterAdded(self.LocalPlayer.Character)
+	end
+
+	while task.wait(0) do
+		--print("Players Count: ", #PlayersService:GetPlayers(), "SilentAimIgnoreList Count: ", #self.SilentAimIgnoreList - 2, #self.CustomIgnoreList)
+		--[[local VehicleCount = 0
+		for _, _ in next, self.VehiclesDataTab do
+			VehicleCount = VehicleCount + 1
+		end
+		print("Registered Vehicle Count: ", VehicleCount, "GetChildren Vehicle Count: ", #self.PlayerVehiclesFolder:GetChildren())]]
+		self:updateLocalPlayerPing()
+		self:requestCheckRegisteredGunsForReload()
+		--warn("Last LocalPlayer Ping ====== ", self.LocalPlayerPing)
+	end
+end
+
+---------------- [[ ;) ]]
+
+if _G.OPOPGunScript == nil then
+	_G.OPOPGunScript = true
+	System:initiateSystem()	
+end
