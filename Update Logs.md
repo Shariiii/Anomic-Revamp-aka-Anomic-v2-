@@ -18,6 +18,7 @@ Extra Info:
 + There will be some settings that you can adjust before executing the script
 
 System.IsSilentAimEnabled = true -- true = SilentAim enabled || false = SilenAim disabled
+
 System.IsInstantKillEnabled = true -- true = InstantKill enabled || false = InstantKill disabled
 
 
