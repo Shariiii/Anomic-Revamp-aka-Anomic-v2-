@@ -14,9 +14,7 @@ Extra Info:
 + Auto Reload follows the same concept as the other Anomic v1 well too lazy to explain
 + Silent Aim will now ignore targets sitting in a car unless you break its window such that Silent Aim can detect the target through the gap. Well, I did some testing pretty sure you can't kill someone standing behind a car.
 + Anti Dumb Camera basically disables the toxic camera lock for guns so you can enjoy them like Anomic v1
-
-++ There will be some settings that you can adjust before executing the script
-------
++ There will be some settings that you can adjust before executing the script
 System.IsSilentAimEnabled = true -- true = SilentAim enabled || false = SilenAim disabled
 System.IsInstantKillEnabled = true -- true = InstantKill enabled || false = InstantKill disabled
 
