@@ -16,6 +16,7 @@ Extra Info:
 + Anti Dumb Camera basically disables the toxic camera lock for guns so you can enjoy them like Anomic v1
 
 ++ There will be some settings that you can adjust before executing the script
+------
 System.IsSilentAimEnabled = true -- true = SilentAim enabled || false = SilenAim disabled
 System.IsInstantKillEnabled = true -- true = InstantKill enabled || false = InstantKill disabled
 
