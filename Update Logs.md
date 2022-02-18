@@ -26,4 +26,5 @@ Note 1. Anomic v2 was really boring so I didn't do much testing I'll wait for yo
 Note 2. This script is open source so feel free to read and learn just don't sell it please its a free script plus I'll release the source of Anomic v1 in a few days
 
 Note 3. Honestly, Anomic v2 has tons of bugs so it was super annoying to make op op gun that works on it. The game needs to be improved a lot idk if you have ever noticed the CPU usage devs probably don't know how their game is even working else these issues can easily be resolved more like they just add whatever looks or feel cool without knowing how to script it properly
+
 -------
