@@ -226,7 +226,7 @@ function System:requestInstantKill(GunSelf, HitPosition, HitObject, HitNormal)
 			end
 		end
 	end
-	
+
 	return HitPosition, HitObject, HitNormal
 end
 
@@ -251,7 +251,7 @@ function System.modedFireSingleProjectile(GunSelf, GunTool)
 	System.LastGunUsedTick = tick()
 	System.CurrentGunRange = GunSelf.MaxGunRange
 	--print("Using ModedFireSingleShot", GunSelf, GunTool)
-	
+
 	local TargetPosition, TargetObject, TargetNormal
 	if System.IsSilentAimEnabled == true then
 		if GunSelf.AmmoType ~= "12 Gauge" or tick() - GunSelf.SilentShotgunTick >= .1 then
@@ -268,7 +268,7 @@ function System.modedFireSingleProjectile(GunSelf, GunTool)
 	else
 		TargetPosition, TargetObject, TargetNormal = GunSelf:FireCuteProjectile(GunTool)
 	end
-	
+
 	if System.IsInstantKillEnabled == true then
 		if GunSelf.AmmoType == "12 Gauge" then
 			if tick() - GunSelf.SilentShotgunTick < .1 then
@@ -279,19 +279,21 @@ function System.modedFireSingleProjectile(GunSelf, GunTool)
 		end
 		return System:requestInstantKill(GunSelf, TargetPosition, TargetObject, TargetNormal)
 	end
-	
+
 	return TargetPosition, TargetObject, TargetNormal
 end
 
 function System:modifyGunHandlerModule(Module, ModuleTab)
 	if ModuleTab.LoumecDum == nil then
+		if isreadonly(ModuleTab) == true then setreadonly(ModuleTab, false) end
+		if getrawmetatable(ModuleTab) ~= nil then setrawmetatable(ModuleTab, nil) end
 		ModuleTab.LoumecDum = true
 		if Module.Parent ~= nil and Module.Parent.Parent ~= nil then
 			ModuleTab.GunTool = Module.Parent.Parent
 
 			ModuleTab.GunName = ModuleTab.GunTool.Name
 			ModuleTab.GunHandle = ModuleTab.GunTool.Handle
-			
+
 			ModuleTab.GunInfoFolder = ModuleTab.GunTool.InfoFolder
 			ModuleTab.GunMagHolder = ModuleTab.GunInfoFolder.Mag
 
@@ -300,9 +302,9 @@ function System:modifyGunHandlerModule(Module, ModuleTab)
 			ModuleTab.GunDamageOnHead = ModuleTab.GunDamage.Head
 
 			--warn(Module:GetFullName(), ModuleTab, ModuleTab.AmmoType, ModuleTab.GunDamage, ModuleTab.GunDamageOnHead)
-			
+
 			ModuleTab.SilentShotgunTick = 0
-			
+
 			ModuleTab.FireCuteProjectile = ModuleTab.FireSingleProjectile
 			ModuleTab.FireSingleProjectile = self.modedFireSingleProjectile
 		end
@@ -402,7 +404,7 @@ function System.registerTargetPlayer(TargetPlayer)
 		CurrentTargetTab.DamageMultiplier = 1
 
 		System.TargetsDataTab[TargetPlayer] = CurrentTargetTab
-		
+
 		CurrentTargetTab.WantedStatusFolder = TargetPlayer:WaitForChild("WantedStatus", 10)
 		if CurrentTargetTab.WantedStatusFolder ~= nil then
 			CurrentTargetTab.WantedStatusHolder = CurrentTargetTab.WantedStatusFolder:WaitForChild("WantedStatus", 10)
@@ -429,7 +431,7 @@ function System.registerTargetPlayer(TargetPlayer)
 			NewLocalPlayerDataTab.PassiveMode = true
 
 			System.LocalPlayerDataTab = NewLocalPlayerDataTab
-			
+
 			NewLocalPlayerDataTab.WantedStatusFolder = TargetPlayer:WaitForChild("WantedStatus", 10)
 			NewLocalPlayerDataTab.PassiveModeHolder = NewLocalPlayerDataTab.WantedStatusFolder:WaitForChild("PassiveMode", 10)
 
@@ -454,14 +456,14 @@ function System.registerTargetPlayer(TargetPlayer)
 				NewLocalPlayerDataTab.TeamHolder.Changed:Connect(onLocalTeamValueChanged)
 				onLocalTeamValueChanged()
 			end
-			
+
 			local function onPassiveModeChanged()
 				if NewLocalPlayerDataTab.PassiveModeHolder.Value ~= NewLocalPlayerDataTab.PassiveMode then
 					NewLocalPlayerDataTab.PassiveMode = NewLocalPlayerDataTab.PassiveModeHolder.Value
 					updateAllTargetsData()
 				end
 			end
-			
+
 			NewLocalPlayerDataTab.PassiveModeHolder.Changed:Connect(onPassiveModeChanged)
 			onPassiveModeChanged()
 			System.LocalPlayer.CharacterAdded:Connect(onLocalCharacterAdded)
@@ -803,7 +805,7 @@ end
 function System:initiateSystem()
 	PlayersService.PlayerAdded:Connect(self.registerTargetPlayer)
 	PlayersService.PlayerRemoving:Connect(self.unregisterTargetPlayer)
-	
+
 	self.registerTargetPlayer(self.LocalPlayer)
 	for _, Player in next, PlayersService:GetPlayers() do
 		if Player ~= self.LocalPlayer then
@@ -829,7 +831,7 @@ function System:initiateSystem()
 	else
 		self.SilentAimCircleRange = 9999
 	end
-	
+
 	self:AntiSmallBrainCamera()
 	self:initiateGunHandlerModification()
 
