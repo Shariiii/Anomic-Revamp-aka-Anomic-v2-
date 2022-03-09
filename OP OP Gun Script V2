@@ -177,13 +177,20 @@ function System:returnHitInfoHolderTab(GunProjectileAmount)
 	return CurrentDamageHitInfoHolderTab
 end
 
-function System:customDamagePlayerFunction(RepeatCount, HitPosition, HitObject, HitNormal, GunTool, GunMagValue, GunProjectileAmount)
+function System:customDamagePlayerFunction(RepeatCount, HitPosition, HitObject, HitNormal, GunTool, GunMagValue, GunFirerateYield, GunProjectileAmount)
 	local CurrentDamageHitInfoHolderTab = self:returnHitInfoHolderTab(GunProjectileAmount)
 	self.DamageHitInfoTab.HitPoint = HitPosition
 	self.DamageHitInfoTab.HitPart = HitObject
 	self.DamageHitInfoTab.Surface = HitPosition.Unit
+	
+	local KillConfirmNum = 5
+	local KillConfirmYield, Pass1, Pass2 = GunFirerateYield/KillConfirmNum, nil, nil
 	for ShootCount = 0, RepeatCount - 1 do
-		self.Remotes.GunServer:FireServer("Fire", GunTool, CurrentDamageHitInfoHolderTab, self:generatePassForGunRemote(GunTool.Name, GunMagValue - ShootCount));
+		Pass1, Pass2 = self:generatePassForGunRemote(GunTool.Name, GunMagValue - ShootCount)
+		for KillConfirmCount = 1, KillConfirmNum do
+			self.Remotes.GunServer:FireServer("Fire", GunTool, CurrentDamageHitInfoHolderTab, Pass1, Pass2)
+			task.wait(KillConfirmYield)
+		end
 	end
 end
 --------
@@ -219,7 +226,7 @@ function System:requestInstantKill(GunSelf, HitPosition, HitObject, HitNormal)
 					if CurrentShootLoopCount > GunSelf.GunMagHolder.Value then
 						CurrentShootLoopCount = GunSelf.GunMagHolder.Value
 					end
-					self:customDamagePlayerFunction(CurrentShootLoopCount, HitPosition, HitObject, HitNormal, GunSelf.GunTool, GunSelf.GunMagHolder.Value, GunSelf.GunProjectileAmount)
+					self:customDamagePlayerFunction(CurrentShootLoopCount, HitPosition, HitObject, HitNormal, GunSelf.GunTool, GunSelf.GunMagHolder.Value, GunSelf.GunFirerateYield, GunSelf.GunProjectileAmount)
 					--print("+Damage Loop Count : ", CurrentShootLoopCount, GunSelf.GunTool, GunSelf.GunMagHolder.Value)
 					return nil
 				end
@@ -298,7 +305,7 @@ function System:modifyGunHandlerModule(Module, ModuleTab)
 			ModuleTab.GunMagHolder = ModuleTab.GunInfoFolder.Mag
 
 			ModuleTab.GunDataTab = self:registerItemType(ModuleTab.GunName)
-			ModuleTab.AmmoType, ModuleTab.GunDamage, ModuleTab.GunProjectileAmount, ModuleTab.FullDamageRange, ModuleTab.MaxGunRange = ModuleTab.GunDataTab.AmmoType, ModuleTab.GunDataTab.Damage, ModuleTab.GunDataTab.ProjectileAmount, ModuleTab.GunDataTab.FullDamageRange, ModuleTab.GunDataTab.Range
+			ModuleTab.AmmoType, ModuleTab.GunDamage, ModuleTab.GunProjectileAmount, ModuleTab.FullDamageRange, ModuleTab.MaxGunRange, ModuleTab.GunFirerateYield = ModuleTab.GunDataTab.AmmoType, ModuleTab.GunDataTab.Damage, ModuleTab.GunDataTab.ProjectileAmount, ModuleTab.GunDataTab.FullDamageRange, ModuleTab.GunDataTab.Range, (60/ModuleTab.GunDataTab.Firerate)/1.5
 			ModuleTab.GunDamageOnHead = ModuleTab.GunDamage.Head
 
 			--warn(Module:GetFullName(), ModuleTab, ModuleTab.AmmoType, ModuleTab.GunDamage, ModuleTab.GunDamageOnHead)
